@@ -1,3 +1,9 @@
+"""
+branch_and_bound.py
+
+Ethan Koehler
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -41,6 +47,31 @@ class BranchAndBoundSolver:
         self.nodes_pruned = 0
         self.best_reward = -1.0
         self.best_schedule: list[str] = []
+    def _remove_irrelevant_tasks(self, schedule: list[str]) -> list[str]:
+        # Remove zero-reward tasks that are not dependencies of any other scheduled task
+        completion_times = {}
+        curr_time = 0
+        for tid in schedule: # completion times allows us to check later if a task earned it's reward
+            curr_time += self.tasks[tid]["duration"]
+            completion_times[tid] = curr_time
+        
+        required = {
+        tid for tid in schedule
+        if completion_times[tid] <= self.tasks[tid]["deadline"]
+        }
+        stack = list(required)
+
+        while stack:
+            tid = stack.pop()
+
+            for dependency in self.tasks[tid]["dependencies"]:
+                if dependency in schedule and dependency not in required:
+                    required.add(dependency)
+                    stack.append(dependency)
+
+        # Preserve the original schedule order.
+        return [tid for tid in schedule if tid in required]
+
 
     def _compute_upper_bound(
         self, current_time: int, scheduled_set: set, current_reward: float
@@ -110,12 +141,10 @@ class BranchAndBoundSolver:
             while stack:
                 curr_time, scheduled, schedule, reward, ub = stack.pop()
                 self.nodes_explored += 1
-                # If all tasks are scheduled, then check if the reward is worth
-                if len(scheduled) == len(self.all_task_ids):
-                    if reward > self.best_reward:
-                        self.best_reward = reward
-                        self.best_schedule = list(schedule)
-                    continue
+
+                if reward > self.best_reward:
+                    self.best_reward = reward
+                    self.best_schedule = list(schedule)
 
                 if ub <= self.best_reward:
                     self.nodes_pruned += 1
@@ -167,6 +196,9 @@ class BranchAndBoundSolver:
         except TimeoutException:
             timed_out = True
 
+        if self.best_schedule:
+            self.best_schedule = self._remove_irrelevant_tasks(self.best_schedule)
+
         end_time = time.perf_counter()
 
         _current_mem, peak_mem = tracemalloc.get_traced_memory()
@@ -176,14 +208,14 @@ class BranchAndBoundSolver:
 
         # Compute schedule task details
         task_details = []
-        curr_t = 0
+        curr_time = 0
 
         for tid in self.best_schedule:
             task = self.tasks[tid]
 
-            start = curr_t
-            completion = curr_t + task["duration"]
-            curr_t = completion
+            start = curr_time
+            completion = curr_time + task["duration"]
+            curr_time = completion
 
             deadline = task["deadline"]
             earned = task["reward"] if completion <= deadline else 0.0
