@@ -4,7 +4,7 @@
 
 Please run the program from a Linux environment.
 
-Run it from the same directory as your `test_datasets.py` file. You can run it with arguments:
+Run it from the same directory as the `test_datasets.py` file. You can run it with arguments:
 
 - `--timeout X`
 - `--output Y`
@@ -70,13 +70,13 @@ Timeout was implemented with Python's `signal` library.
 
 ## Possible Improvements
 
-If we could guarantee a good incumbent with a faster algorithm (e.g. greedy):
+If you could guarantee a good incumbent with a faster algorithm (e.g. greedy):
 
 - Bad branches could be pruned earlier, giving more time to explore possible good solutions.
 
 Switching the current algorithm to BFS is possible:
 
-- We would only need to swap the stack of states for a queue.
+- You would only need to swap the stack of states for a queue.
 
 ## Credits
 
