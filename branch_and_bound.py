@@ -7,13 +7,17 @@ Ethan Koehler
 from __future__ import annotations
 
 import argparse
+import heapq
 import json
 import platform
 import signal
 import time
 import tracemalloc
+from collections import deque
 from typing import Any
-from test_datasets import ALL_DATASETS, FIXED_DATASETS, get_dataset, validate_dataset
+
+from greedy import run_all_algorithms
+from test_datasets import ALL_DATASETS, get_dataset, validate_dataset
 
 
 class TimeoutException(Exception):
@@ -45,19 +49,24 @@ class BranchAndBoundSolver:
         # Statistics tracking
         self.nodes_explored = 0
         self.nodes_pruned = 0
-        self.best_reward = -1.0
+        self.best_reward = -1
         self.best_schedule: list[str] = []
+        self.timed_out = False
+
     def _remove_irrelevant_tasks(self, schedule: list[str]) -> list[str]:
         # Remove zero-reward tasks that are not dependencies of any other scheduled task
         completion_times = {}
         curr_time = 0
-        for tid in schedule: # completion times allows us to check later if a task earned it's reward
+        for tid in (
+            schedule
+        ):  # completion times allows us to check later if a task earned it's reward
             curr_time += self.tasks[tid]["duration"]
             completion_times[tid] = curr_time
-        
+
         required = {
-        tid for tid in schedule
-        if completion_times[tid] <= self.tasks[tid]["deadline"]
+            tid
+            for tid in schedule
+            if completion_times[tid] <= self.tasks[tid]["deadline"]
         }
         stack = list(required)
 
@@ -71,7 +80,6 @@ class BranchAndBoundSolver:
 
         # Preserve the original schedule order.
         return [tid for tid in schedule if tid in required]
-
 
     def _compute_upper_bound(
         self, current_time: int, scheduled_set: set, current_reward: float
@@ -117,27 +125,89 @@ class BranchAndBoundSolver:
 
         return current_reward + potential_gain
 
-    def solve(self) -> tuple[dict[str, Any], bool]:
-
-        tracemalloc.start()
-        start_time = time.perf_counter()
-
-        self.nodes_explored = 0
-        self.nodes_pruned = 0
-        self.best_reward = -1.0
-        self.best_schedule = []
-        timed_out = False
-
-        initial_state = (
-            0,
-            frozenset(),
-            [],
-            0.0,
-            self._compute_upper_bound(0, frozenset(), 0.0),
-        )
-        stack = [initial_state]
-
+    def _solve_with_bfs(self) -> None:
         try:
+            initial_state = (
+                0,
+                frozenset(),
+                [],
+                0,
+                self._compute_upper_bound(0, frozenset(), 0),
+            )
+
+            queue = deque([initial_state])
+
+            while queue:
+                curr_time, scheduled, schedule, reward, ub = queue.popleft()
+                self.nodes_explored += 1
+
+                if reward > self.best_reward:
+                    self.best_reward = reward
+                    self.best_schedule = list(schedule)
+
+                if ub <= self.best_reward:
+                    self.nodes_pruned += 1
+                    continue
+
+                eligible = []
+
+                for tid, task in self.tasks.items():
+                    if tid not in scheduled and all(
+                        dep in scheduled for dep in task["dependencies"]
+                    ):  #  Not scheduled And all it's dependencies have been scheduled
+                        eligible.append(task)  # It is eligible
+
+                eligible.sort(
+                    key=lambda t: (
+                        (t["reward"] / t["duration"])
+                        if t["duration"] > 0
+                        else float("inf")
+                    ),
+                    reverse=True,
+                )  # sort by ratio ascending
+                # 	 DFS list stack explores highest ratio unpruned node next
+                for task in eligible:
+                    tid = task["id"]
+                    duration = task["duration"]
+                    deadline = task["deadline"]
+                    task_reward = task["reward"]
+
+                    new_time = curr_time + duration
+                    earned = task_reward if new_time <= deadline else 0
+
+                    new_scheduled = scheduled | {tid}
+                    new_schedule = schedule + [tid]
+                    new_reward = reward + earned
+
+                    child_ub = self._compute_upper_bound(
+                        new_time, new_scheduled, new_reward
+                    )
+
+                    if (
+                        child_ub <= self.best_reward
+                    ):  # Only add nodes to the stack that beat the incumbent
+                        self.nodes_pruned += 1
+                        continue
+
+                    queue.append(
+                        (new_time, new_scheduled, new_schedule, new_reward, child_ub)
+                    )
+
+        except TimeoutException:
+            self.timed_out = True
+
+    def _solve_with_dfs(self) -> None:
+        try:
+            initial_state = (
+                0,
+                frozenset(),
+                [],
+                0,
+                self._compute_upper_bound(0, frozenset(), 0),
+            )
+
+            stack = [initial_state]
+
             while stack:
                 curr_time, scheduled, schedule, reward, ub = stack.pop()
                 self.nodes_explored += 1
@@ -173,7 +243,7 @@ class BranchAndBoundSolver:
                     task_reward = task["reward"]
 
                     new_time = curr_time + duration
-                    earned = task_reward if new_time <= deadline else 0.0
+                    earned = task_reward if new_time <= deadline else 0
 
                     new_scheduled = scheduled | {tid}
                     new_schedule = schedule + [tid]
@@ -194,7 +264,105 @@ class BranchAndBoundSolver:
                     )
 
         except TimeoutException:
-            timed_out = True
+            self.timed_out = True
+
+    def _solve_with_best_first_search(self) -> None:
+        try:
+            initial_state = (
+                frozenset(),
+                [],
+            )
+            initial_upper_bound = -self._compute_upper_bound(0, frozenset(), 0)
+            # Min-heap using negative upper bound as priority.
+            # max heap (-ub, -reward, curr_t, counter, frozenset(), schedule)
+            max_heap = [(initial_upper_bound, -0, -0, 0, initial_state)]
+            counter = 1
+
+            while max_heap:
+                ub, reward, curr_time, _, state = heapq.heappop(max_heap)
+                ub = -ub
+                reward = -reward
+                curr_time = -curr_time
+
+                scheduled, schedule = state
+                self.nodes_explored += 1
+
+                if reward > self.best_reward:
+                    self.best_reward = reward
+                    self.best_schedule = list(schedule)
+
+                if ub <= self.best_reward:
+                    self.nodes_pruned += 1
+                    continue
+
+                eligible = []
+
+                for tid, task in self.tasks.items():
+                    if tid not in scheduled and all(
+                        dep in scheduled for dep in task["dependencies"]
+                    ):
+                        eligible.append(task)
+
+                for task in eligible:
+                    tid = task["id"]
+                    duration = task["duration"]
+                    deadline = task["deadline"]
+                    task_reward = task["reward"]
+
+                    new_time = curr_time + duration
+                    earned = task_reward if new_time <= deadline else 0
+
+                    new_scheduled = scheduled | {tid}
+                    new_schedule = schedule + [tid]
+                    new_reward = reward + earned
+
+                    child_ub = self._compute_upper_bound(
+                        new_time, new_scheduled, new_reward
+                    )
+
+                    if child_ub <= self.best_reward:
+                        self.nodes_pruned += 1
+                        continue
+
+                    heapq.heappush(
+                        max_heap,
+                        (
+                            -child_ub,
+                            -new_reward,
+                            -new_time,
+                            counter,
+                            [new_scheduled, new_schedule],
+                        ),
+                    )
+                    counter += 1
+
+        except TimeoutException:
+            self.timed_out = True
+
+    def solve(self, traversal, timeout=20) -> tuple[dict[str, Any], bool]:
+        results = run_all_algorithms(tasks, self.dataset_name)
+
+        best_algorithm = max(results, key=lambda name: results[name]["total_reward"])
+
+        tracemalloc.start()
+        start_time = time.perf_counter()
+
+        self.nodes_explored = 0
+        self.nodes_pruned = 0
+        self.best_reward = results[best_algorithm]["total_reward"]
+        self.best_schedule = results[best_algorithm]["schedule_sequence"]
+        self.timed_out = False
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.setitimer(signal.ITIMER_REAL, args.timeout)
+        try:
+            if traversal == "bfs":
+                self._solve_with_bfs()
+            elif traversal == "best":
+                self._solve_with_best_first_search()
+            else:
+                self._solve_with_dfs()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
 
         if self.best_schedule:
             self.best_schedule = self._remove_irrelevant_tasks(self.best_schedule)
@@ -218,7 +386,7 @@ class BranchAndBoundSolver:
             curr_time = completion
 
             deadline = task["deadline"]
-            earned = task["reward"] if completion <= deadline else 0.0
+            earned = task["reward"] if completion <= deadline else 0
 
             task_details.append(
                 {
@@ -241,7 +409,7 @@ class BranchAndBoundSolver:
             "nodes_pruned": self.nodes_pruned,
         }
 
-        return result, timed_out
+        return result, self.timed_out
 
 
 if __name__ == "__main__":
@@ -264,6 +432,13 @@ if __name__ == "__main__":
         help="Output as csv, JSON, text, or verbose.",
     )
 
+    parser.add_argument(
+        "--traversal",
+        type=str,
+        default="bfs",
+        help="Choose tree traversal: best, bfs, or dfs (default: dfs)",
+    )
+
     args = parser.parse_args()
 
     if args.output == "csv":
@@ -283,16 +458,11 @@ if __name__ == "__main__":
 
             solver = BranchAndBoundSolver(tasks, dataset_name=name)
 
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.setitimer(signal.ITIMER_REAL, args.timeout)
-            try:
-                res, timed_out = solver.solve()
-            finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
+            res, timed_out = solver.solve(args.traversal, args.timeout)
 
             display_name = f"{name} (timed out)" if timed_out else name
 
-            if args.output == "json":
+            if args.output == "json" or args.output == "JSON":
                 result_json = json.dumps(res, indent=2)
                 print(f"{result_json}\n")
 
@@ -327,7 +497,7 @@ if __name__ == "__main__":
 
                 print(
                     f"{display_name:<35} | "
-                    f"{res['total_reward']:<8.1f} | "
+                    f"{res['total_reward']:<8} | "
                     f"{res['nodes_explored']:<10} | "
                     f"{res['nodes_pruned']:<8} | "
                     f"{res['runtime_ms']:<10.3f} | "

@@ -7,11 +7,13 @@ Please run the program from a Linux environment.
 Run it from the same directory as the `test_datasets.py` file. You can run it with arguments:
 
 - `--timeout X`
-- `--output Y`
+- `--traversal Y`
+- `--output Z`
 
 Where:
 - **X** is the time in seconds until the solver times out for a specific dataset.
-- **Y** is `json`, `text`, `csv`, or `verbose` for different output formats.
+- **Y** is `best`, `bfs`, or `dfs` for different ways to travers the tree.
+- **Z** is `json`, `text`, `csv`, or `verbose` for different output formats.
 
 The default timeout is 20 seconds, and the default output is as a CSV.
 
@@ -37,20 +39,24 @@ Branching builds the state space tree of the problem.
 2. Then the process discovers eligible tasks, which are tasks that have yet to be scheduled from the previous decisions.
 3. An eligible task is any task where all dependencies have already been scheduled.
 4. Then eligible tasks are sorted by a ratio of reward / duration.
-5. Finally, child states are added to the stack if their knapsack upper bound is greater than the best reward so far (the incumbent).
+5. Finally, child states are added to the stack/queue/heap if their knapsack upper bound is greater than the best reward so far (the incumbent).
 
-Sorting by reward / duration puts tasks with a higher reward : duration ratio higher on the stack.
+Sorting by reward / duration puts tasks with a higher reward : duration ratio higher on the stack, this sorting is reversed for the queue, and unnecessary for a minheap.
 
-Child states' upper bounds are calculated before adding them to the stack even though they will be evaluated again when they are popped from the stack:
+Child states' upper bounds are calculated before adding them to the stack/queue/heap even though they will be evaluated again when they are popped from the stack/queue/heap:
 
-- Checking upper bound before adding to the stack helps to conserve memory.
-- It is necessary to check upper bound after popping from the stack because the incumbent was checked when the node was added to the stack, and the current incumbent may differ.
+- Checking upper bound before adding to the stack/queue/heap helps to conserve memory.
+- It is necessary to check upper bound after popping from the stack/queue/heap because the incumbent was checked when the node was added to the stack/queue/heap, and the current incumbent may differ.
 
-Using a stack gives the algorithm a DFS traversal.
+Using a stack gives the algorithm a DFS traversal order.
+
+Using a queue gives the algorithm a BFS traversal order.
+
+Using a minheap sorted by negative upper bound gives the algorithm a best-first-search traversal order.
 
 The algorithm ends when:
 
-- **There are no remaining states in the stack:**
+- **There are no remaining states in the stack/queue/heap:**
   - All branches have either been pruned or evaluated, and a solution has been found.
 - **The timeout time has elapsed:**
   - The incumbent solution is returned.
@@ -68,17 +74,8 @@ Bounding was done using a fractional knapsack upper bound.
 
 Timeout was implemented with Python's `signal` library.
 
-## Possible Improvements
-
-If you could guarantee a good incumbent with a faster algorithm (e.g. greedy):
-
-- Bad branches could be pruned earlier, giving more time to explore possible good solutions.
-
-Switching the current algorithm to BFS is possible:
-
-- You would only need to swap the stack of states for a queue.
-
 ## Credits
 
 - `branch_and_bound.py` - Developed by Ethan Koehler.
 - `test_datasets.py` - Created by Tarun Sai Naregudam
+- `greedy.py` - Created by Ashlan Garner
