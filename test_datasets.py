@@ -1,7 +1,4 @@
 """
-test_datasets.py
-
-Original author: Tarun Sai Naregudam
 CS5200 Project: Deadline-Aware Task Scheduling with Precedence Constraints
 Shared, reproducible datasets for Greedy, Dynamic Programming, and Branch-and-Bound.
 
