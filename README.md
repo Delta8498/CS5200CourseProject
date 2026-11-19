@@ -12,7 +12,7 @@ Run it from the same directory as the `test_datasets.py` file. You can run it wi
 
 Where:
 - **X** is the time in seconds until the solver times out for a specific dataset.
-- **Y** is `best`, `bfs`, or `dfs` for different ways to travers the tree.
+- **Y** is `best`, `bfs`, or `dfs` for different ways to traverse the tree.
 - **Z** is `json`, `text`, `csv`, or `verbose` for different output formats.
 
 The default timeout is 20 seconds, and the default output is as a CSV.
