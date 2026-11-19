@@ -4,7 +4,9 @@
 
 Please run the program from a Linux environment.
 
-Run it from the same directory as the `test_datasets.py` file. You can run it with arguments:
+Run it from the same directory as the `test_datasets.py` file. 
+
+You can run it with arguments:
 
 - `--timeout X`
 - `--traversal Y`
